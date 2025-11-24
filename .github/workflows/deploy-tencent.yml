@@ -1,0 +1,35 @@
+
+name: Deploy to Tencent Cloud COS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Project
+        run: npm run build
+
+      - name: Deploy to Tencent Cloud COS
+        uses: zkqiang/tencent-cos-action@v0.1.0
+        with:
+          args: delete -r -f / && upload -r ./dist/ /
+          secret_id: ${{ secrets.TENCENT_SECRET_ID }}
+          secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
+          bucket: ${{ secrets.TENCENT_BUCKET }}
+          region: ${{ secrets.TENCENT_REGION }}
