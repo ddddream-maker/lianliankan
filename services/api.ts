@@ -31,11 +31,11 @@ export const checkHealth = async (): Promise<boolean> => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-        const res = await fetch(`${API_BASE_URL}/api/health`, { 
+        const res = await fetch(`${API_BASE_URL}/api/health`, {
             signal: controller.signal,
             mode: 'cors'
         });
-        
+
         clearTimeout(timeoutId);
         return res.ok;
     } catch (e) {
@@ -45,7 +45,7 @@ export const checkHealth = async (): Promise<boolean> => {
 
 export const apiLogin = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
     if (!API_BASE_URL) return { success: false, message: 'Offline Mode' };
-    
+
     try {
         const res = await fetch(`${API_BASE_URL}/api/login`, {
             method: 'POST',
@@ -96,5 +96,20 @@ export const apiGetLeaderboard = async (difficulty: string): Promise<Leaderboard
         return await res.json();
     } catch (e) {
         return [];
+    }
+};
+
+export const apiUpdateUserStats = async (username: string, stats: any): Promise<{ success: boolean; user?: User; message?: string }> => {
+    if (!API_BASE_URL) return { success: false, message: 'Offline Mode' };
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/user/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, stats })
+        });
+        return await res.json();
+    } catch (e) {
+        return { success: false, message: 'Update failed' };
     }
 };

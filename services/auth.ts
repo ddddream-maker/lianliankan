@@ -8,8 +8,8 @@ const SESSION_KEY = 'fruit_link_session_v3';
 let isOnline = false;
 
 API.checkHealth().then(status => {
-    isOnline = status;
-    console.log(`Backend Status: ${status ? 'Online' : 'Offline'}`);
+  isOnline = status;
+  console.log(`Backend Status: ${status ? 'Online' : 'Offline'}`);
 });
 
 const getLocalDb = () => {
@@ -23,24 +23,24 @@ const saveLocalDb = (users: any[]) => {
 
 // Helper to normalize user object
 const normalizeUser = (u: any): User => ({
-    username: u.username,
-    maxLevel: u.maxLevel || 1,
-    highScore: u.highScore || 0,
-    coins: u.coins || 0,
-    inventory: u.inventory || {},
-    perks: u.perks || { extraHints: 0, extraShuffles: 0 }
+  username: u.username,
+  maxLevel: u.maxLevel || 1,
+  highScore: u.highScore || 0,
+  coins: u.coins || 0,
+  inventory: u.inventory || {},
+  perks: u.perks || { extraHints: 0, extraShuffles: 0 }
 });
 
 export const loginUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
   if (isOnline) {
-      try {
-          const res = await API.apiLogin(username, password);
-          if (res.success && res.user) {
-              const normalized = normalizeUser(res.user);
-              localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
-              return { ...res, user: normalized };
-          }
-      } catch (e) {}
+    try {
+      const res = await API.apiLogin(username, password);
+      if (res.success && res.user) {
+        const normalized = normalizeUser(res.user);
+        localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+        return { ...res, user: normalized };
+      }
+    } catch (e) { }
   }
 
   const users = getLocalDb();
@@ -56,14 +56,14 @@ export const loginUser = async (username: string, password: string): Promise<{ s
 
 export const registerUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
   if (isOnline) {
-      try {
-          const res = await API.apiRegister(username, password);
-          if (res.success && res.user) {
-              const normalized = normalizeUser(res.user);
-              localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
-              return { ...res, user: normalized };
-          }
-      } catch (e) {}
+    try {
+      const res = await API.apiRegister(username, password);
+      if (res.success && res.user) {
+        const normalized = normalizeUser(res.user);
+        localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+        return { ...res, user: normalized };
+      }
+    } catch (e) { }
   }
 
   const users = getLocalDb();
@@ -83,10 +83,10 @@ export const registerUser = async (username: string, password: string): Promise<
 
   users.push(newUser);
   saveLocalDb(users);
-  
+
   const safeUser = normalizeUser(newUser);
   localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-  
+
   return { success: true, user: safeUser };
 };
 
@@ -100,17 +100,17 @@ export const getCurrentUser = (): User | null => {
 };
 
 // Update Score, Coins, Inventory AND Perks
-export const updateUserStats = async (username: string, stats: { 
-    maxLevel?: number, 
-    highScore?: number, 
-    addCoins?: number, 
-    spendCoins?: number,
-    addItems?: Record<string, number>,
-    upgradePerk?: keyof UserPerks
+export const updateUserStats = async (username: string, stats: {
+  maxLevel?: number,
+  highScore?: number,
+  addCoins?: number,
+  spendCoins?: number,
+  addItems?: Record<string, number>,
+  upgradePerk?: keyof UserPerks
 }) => {
   const users = getLocalDb();
   const userIndex = users.findIndex((u: any) => u.username === username);
-  
+
   if (userIndex !== -1) {
     const user = users[userIndex];
     // Ensure fields exist
@@ -123,35 +123,36 @@ export const updateUserStats = async (username: string, stats: {
     let updated = false;
 
     if (stats.maxLevel && stats.maxLevel > user.maxLevel) {
-        user.maxLevel = stats.maxLevel;
-        updated = true;
+      user.maxLevel = stats.maxLevel;
+      updated = true;
     }
     if (stats.highScore && stats.highScore > user.highScore) {
-        user.highScore = stats.highScore;
-        updated = true;
+      user.highScore = stats.highScore;
+      updated = true;
     }
     if (stats.addCoins) {
-        user.coins += stats.addCoins;
-        updated = true;
+      user.coins += stats.addCoins;
+      updated = true;
     }
     if (stats.spendCoins) {
-        user.coins = Math.max(0, user.coins - stats.spendCoins);
-        updated = true;
+      user.coins = Math.max(0, user.coins - stats.spendCoins);
+      updated = true;
     }
     if (stats.addItems) {
-        Object.entries(stats.addItems).forEach(([item, count]) => {
-            const itemCount = count as number;
-            user.inventory[item] = (user.inventory[item] || 0) + itemCount;
-        });
-        updated = true;
+      Object.entries(stats.addItems).forEach(([item, count]) => {
+        const itemCount = count as number;
+        user.inventory[item] = (user.inventory[item] || 0) + itemCount;
+      });
+      updated = true;
     }
     if (stats.upgradePerk) {
-        user.perks[stats.upgradePerk] = (user.perks[stats.upgradePerk] || 0) + 1;
-        updated = true;
+      user.perks[stats.upgradePerk] = (user.perks[stats.upgradePerk] || 0) + 1;
+      updated = true;
     }
 
     if (updated) {
       saveLocalDb(users);
+
       // Update session if it matches
       const session = getCurrentUser();
       if (session && session.username === username) {
@@ -162,25 +163,34 @@ export const updateUserStats = async (username: string, stats: {
         session.perks = user.perks;
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
       }
+
+      // Sync with Backend if Online
+      if (isOnline) {
+        API.apiUpdateUserStats(username, stats).then(res => {
+          if (res.success && res.user) {
+            console.log('Synced with server');
+          }
+        });
+      }
     }
   }
 };
 
 export const getGlobalLeaderboard = async (): Promise<LeaderboardEntry[]> => {
-    const users = getLocalDb();
-    const ranked = users
-        .map((u: any) => ({
-            name: u.username,
-            maxLevel: u.maxLevel || 1,
-            score: u.highScore || 0,
-            rank: 0,
-            avatar: '👤'
-        }))
-        .sort((a: any, b: any) => {
-            if (b.maxLevel !== a.maxLevel) return b.maxLevel - a.maxLevel;
-            return b.score - a.score;
-        })
-        .slice(0, 5);
-    
-    return ranked.map((u: any, i: number) => ({ ...u, rank: i + 1 }));
+  const users = getLocalDb();
+  const ranked = users
+    .map((u: any) => ({
+      name: u.username,
+      maxLevel: u.maxLevel || 1,
+      score: u.highScore || 0,
+      rank: 0,
+      avatar: '👤'
+    }))
+    .sort((a: any, b: any) => {
+      if (b.maxLevel !== a.maxLevel) return b.maxLevel - a.maxLevel;
+      return b.score - a.score;
+    })
+    .slice(0, 5);
+
+  return ranked.map((u: any, i: number) => ({ ...u, rank: i + 1 }));
 };

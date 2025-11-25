@@ -1,0 +1,16 @@
+{
+  "users": [
+    {
+      "username": "testuser_persist",
+      "passwordHash": "123456",
+      "maxLevel": 1,
+      "highScore": 0,
+      "coins": 999,
+      "inventory": {},
+      "perks": {
+        "extraHints": 0,
+        "extraShuffles": 0
+      }
+    }
+  ]
+}
