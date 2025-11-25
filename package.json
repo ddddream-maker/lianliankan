@@ -10,6 +10,7 @@
     "start": "vite"
   },
   "dependencies": {
+    "@cloudbase/js-sdk": "^2.22.9",
     "@supabase/supabase-js": "^2.39.0",
     "body-parser": "^2.2.1",
     "clsx": "^2.0.0",

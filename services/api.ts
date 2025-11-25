@@ -21,56 +21,19 @@ const IS_DEV = metaEnv.DEV;
 
 export const API_BASE_URL = ENV_API_URL || (IS_DEV ? 'http://localhost:3001' : '');
 
-// Helper to check if server is alive
+// Local API calls are deprecated in favor of CloudBase SDK
+// Keeping minimal structure for compatibility if needed, but mostly unused now.
+
 export const checkHealth = async (): Promise<boolean> => {
-    // 如果没有配置 API URL，直接返回 false，进入纯单机模式
-    if (!API_BASE_URL) return false;
-
-    try {
-        // 设置超时，避免在没有后端时页面卡顿
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-        const res = await fetch(`${API_BASE_URL}/api/health`, {
-            signal: controller.signal,
-            mode: 'cors'
-        });
-
-        clearTimeout(timeoutId);
-        return res.ok;
-    } catch (e) {
-        return false;
-    }
+    return false; // Force offline/cloud mode logic
 };
 
-export const apiLogin = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-    if (!API_BASE_URL) return { success: false, message: 'Offline Mode' };
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        return await res.json();
-    } catch (e) {
-        return { success: false, message: '无法连接服务器' };
-    }
+export const apiLogin = async (username: string, password: string) => {
+    return { success: false, message: 'Deprecated' };
 };
 
-export const apiRegister = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-    if (!API_BASE_URL) return { success: false, message: 'Offline Mode' };
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        return await res.json();
-    } catch (e) {
-        return { success: false, message: '注册请求失败' };
-    }
+export const apiRegister = async (username: string, password: string) => {
+    return { success: false, message: 'Deprecated' };
 };
 
 export const apiUpdateScore = async (username: string, difficulty: string, score: number, timeUsed: number) => {
@@ -87,29 +50,10 @@ export const apiUpdateScore = async (username: string, difficulty: string, score
     }
 };
 
-export const apiGetLeaderboard = async (difficulty: string): Promise<LeaderboardEntry[]> => {
-    if (!API_BASE_URL) return [];
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/leaderboard?difficulty=${difficulty}`);
-        if (!res.ok) return [];
-        return await res.json();
-    } catch (e) {
-        return [];
-    }
+export const apiGetLeaderboard = async (difficulty: string) => {
+    return [];
 };
 
-export const apiUpdateUserStats = async (username: string, stats: any): Promise<{ success: boolean; user?: User; message?: string }> => {
-    if (!API_BASE_URL) return { success: false, message: 'Offline Mode' };
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/user/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, stats })
-        });
-        return await res.json();
-    } catch (e) {
-        return { success: false, message: 'Update failed' };
-    }
+export const apiUpdateUserStats = async (username: string, stats: any) => {
+    return { success: false, message: 'Deprecated' };
 };

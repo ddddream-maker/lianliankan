@@ -1,29 +1,11 @@
-
 import { User, LeaderboardEntry, UserPerks } from '../types';
-import * as API from './api';
+import { auth, db, isCloudBaseConfigured } from './tcb';
 
-const DB_KEY = 'fruit_link_users_v3';
 const SESSION_KEY = 'fruit_link_session_v3';
 
-let isOnline = false;
-
-API.checkHealth().then(status => {
-  isOnline = status;
-  console.log(`Backend Status: ${status ? 'Online' : 'Offline'}`);
-});
-
-const getLocalDb = () => {
-  const str = localStorage.getItem(DB_KEY);
-  return str ? JSON.parse(str) : [];
-};
-
-const saveLocalDb = (users: any[]) => {
-  localStorage.setItem(DB_KEY, JSON.stringify(users));
-};
-
-// Helper to normalize user object
+// Helper to normalize user object from CloudBase
 const normalizeUser = (u: any): User => ({
-  username: u.username,
+  username: u.username || u.email?.split('@')[0] || 'User',
   maxLevel: u.maxLevel || 1,
   highScore: u.highScore || 0,
   coins: u.coins || 0,
@@ -32,65 +14,90 @@ const normalizeUser = (u: any): User => ({
 });
 
 export const loginUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-  if (isOnline) {
-    try {
-      const res = await API.apiLogin(username, password);
-      if (res.success && res.user) {
-        const normalized = normalizeUser(res.user);
-        localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
-        return { ...res, user: normalized };
+  if (!isCloudBaseConfigured()) {
+    return { success: false, message: 'CloudBase EnvID not configured' };
+  }
+
+  try {
+    const email = username.includes('@') ? username : `${username}@fruitlink.com`;
+
+    // Cast auth to any to avoid TS errors with SDK types
+    const authInstance = auth as any;
+    // CloudBase SDK v2 uses signInWithEmail for email/password login
+    await authInstance.signInWithEmail(email, password);
+    const currentUser = authInstance.currentUser;
+
+    if (currentUser) {
+      const res = await db.collection('users').doc(currentUser.uid).get();
+
+      let userData;
+      if (res.data && res.data.length > 0) {
+        userData = res.data[0];
+      } else {
+        userData = {
+          username: username,
+          maxLevel: 1,
+          highScore: 0,
+          coins: 0,
+          inventory: {},
+          perks: { extraHints: 0, extraShuffles: 0 }
+        };
+        await db.collection('users').doc(currentUser.uid).set(userData);
       }
-    } catch (e) { }
-  }
 
-  const users = getLocalDb();
-  const user = users.find((u: any) => u.username.toLowerCase() === username.toLowerCase());
-
-  if (user && user.passwordHash === password) {
-    const safeUser = normalizeUser(user);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-    return { success: true, user: safeUser };
+      const normalized = normalizeUser(userData);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+      return { success: true, user: normalized };
+    }
+  } catch (e: any) {
+    return { success: false, message: e.message || 'Login failed' };
   }
-  return { success: false, message: '账号或密码错误 (Offline)' };
+  return { success: false, message: 'Login failed' };
 };
 
 export const registerUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-  if (isOnline) {
-    try {
-      const res = await API.apiRegister(username, password);
-      if (res.success && res.user) {
-        const normalized = normalizeUser(res.user);
-        localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
-        return { ...res, user: normalized };
-      }
-    } catch (e) { }
+  if (!isCloudBaseConfigured()) {
+    return { success: false, message: 'CloudBase EnvID not configured' };
   }
 
-  const users = getLocalDb();
-  if (users.some((u: any) => u.username.toLowerCase() === username.toLowerCase())) {
-    return { success: false, message: '用户已存在' };
+  try {
+    const email = username.includes('@') ? username : `${username}@fruitlink.com`;
+
+    const authInstance = auth as any;
+    // CloudBase SDK v2 uses signUp for registration
+    await authInstance.signUp(email, password);
+
+    // Auto login after sign up
+    await authInstance.signInWithEmail(email, password);
+    const currentUser = authInstance.currentUser;
+
+    if (currentUser) {
+      const newUser = {
+        username,
+        maxLevel: 1,
+        highScore: 0,
+        coins: 0,
+        inventory: {},
+        perks: { extraHints: 0, extraShuffles: 0 }
+      };
+
+      await db.collection('users').doc(currentUser.uid).set(newUser);
+
+      const safeUser = normalizeUser(newUser);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
+      return { success: true, user: safeUser };
+    }
+  } catch (e: any) {
+    return { success: false, message: e.message || 'Registration failed' };
   }
-
-  const newUser = {
-    username,
-    passwordHash: password,
-    maxLevel: 1,
-    highScore: 0,
-    coins: 0,
-    inventory: {},
-    perks: { extraHints: 0, extraShuffles: 0 }
-  };
-
-  users.push(newUser);
-  saveLocalDb(users);
-
-  const safeUser = normalizeUser(newUser);
-  localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-
-  return { success: true, user: safeUser };
+  return { success: false, message: 'Registration failed' };
 };
 
-export const logoutUser = () => {
+export const logoutUser = async () => {
+  if (isCloudBaseConfigured()) {
+    const authInstance = auth as any;
+    await authInstance.signOut();
+  }
   localStorage.removeItem(SESSION_KEY);
 };
 
@@ -99,7 +106,6 @@ export const getCurrentUser = (): User | null => {
   return str ? JSON.parse(str) : null;
 };
 
-// Update Score, Coins, Inventory AND Perks
 export const updateUserStats = async (username: string, stats: {
   maxLevel?: number,
   highScore?: number,
@@ -108,89 +114,77 @@ export const updateUserStats = async (username: string, stats: {
   addItems?: Record<string, number>,
   upgradePerk?: keyof UserPerks
 }) => {
-  const users = getLocalDb();
-  const userIndex = users.findIndex((u: any) => u.username === username);
+  const session = getCurrentUser();
+  if (!session) return;
 
-  if (userIndex !== -1) {
-    const user = users[userIndex];
-    // Ensure fields exist
-    if (!user.maxLevel) user.maxLevel = 1;
-    if (!user.highScore) user.highScore = 0;
-    if (!user.coins) user.coins = 0;
-    if (!user.inventory) user.inventory = {};
-    if (!user.perks) user.perks = { extraHints: 0, extraShuffles: 0 };
+  let updated = false;
+  if (stats.maxLevel && stats.maxLevel > session.maxLevel) { session.maxLevel = stats.maxLevel; updated = true; }
+  if (stats.highScore && stats.highScore > session.highScore) { session.highScore = stats.highScore; updated = true; }
+  if (stats.addCoins) { session.coins = (session.coins || 0) + stats.addCoins; updated = true; }
+  if (stats.spendCoins) { session.coins = Math.max(0, (session.coins || 0) - stats.spendCoins); updated = true; }
 
-    let updated = false;
+  if (stats.addItems) {
+    session.inventory = session.inventory || {};
+    Object.entries(stats.addItems).forEach(([item, count]) => {
+      session.inventory[item] = (session.inventory[item] || 0) + Number(count);
+    });
+    updated = true;
+  }
+  if (stats.upgradePerk) {
+    session.perks = session.perks || { extraHints: 0, extraShuffles: 0 };
+    session.perks[stats.upgradePerk] = (session.perks[stats.upgradePerk] || 0) + 1;
+    updated = true;
+  }
 
-    if (stats.maxLevel && stats.maxLevel > user.maxLevel) {
-      user.maxLevel = stats.maxLevel;
-      updated = true;
-    }
-    if (stats.highScore && stats.highScore > user.highScore) {
-      user.highScore = stats.highScore;
-      updated = true;
-    }
-    if (stats.addCoins) {
-      user.coins += stats.addCoins;
-      updated = true;
-    }
-    if (stats.spendCoins) {
-      user.coins = Math.max(0, user.coins - stats.spendCoins);
-      updated = true;
-    }
-    if (stats.addItems) {
-      Object.entries(stats.addItems).forEach(([item, count]) => {
-        const itemCount = count as number;
-        user.inventory[item] = (user.inventory[item] || 0) + itemCount;
-      });
-      updated = true;
-    }
-    if (stats.upgradePerk) {
-      user.perks[stats.upgradePerk] = (user.perks[stats.upgradePerk] || 0) + 1;
-      updated = true;
-    }
+  if (updated) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 
-    if (updated) {
-      saveLocalDb(users);
+    const authInstance = auth as any;
+    if (isCloudBaseConfigured() && authInstance.currentUser) {
+      const uid = authInstance.currentUser.uid;
+      const cmd = db.command as any;
+      const updateData: any = {};
 
-      // Update session if it matches
-      const session = getCurrentUser();
-      if (session && session.username === username) {
-        session.maxLevel = user.maxLevel;
-        session.highScore = user.highScore;
-        session.coins = user.coins;
-        session.inventory = user.inventory;
-        session.perks = user.perks;
-        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      }
+      if (stats.maxLevel) updateData.maxLevel = cmd.max(stats.maxLevel);
+      if (stats.highScore) updateData.highScore = cmd.max(stats.highScore);
+      if (stats.addCoins) updateData.coins = cmd.inc(stats.addCoins);
+      if (stats.spendCoins) updateData.coins = cmd.inc(-stats.spendCoins);
 
-      // Sync with Backend if Online
-      if (isOnline) {
-        API.apiUpdateUserStats(username, stats).then(res => {
-          if (res.success && res.user) {
-            console.log('Synced with server');
-          }
+      if (stats.addItems) {
+        Object.entries(stats.addItems).forEach(([item, count]) => {
+          updateData[`inventory.${item}`] = cmd.inc(Number(count));
         });
       }
+      if (stats.upgradePerk) {
+        updateData[`perks.${stats.upgradePerk}`] = cmd.inc(1);
+      }
+
+      db.collection('users').doc(uid).update(updateData).catch(console.error);
     }
   }
 };
 
 export const getGlobalLeaderboard = async (): Promise<LeaderboardEntry[]> => {
-  const users = getLocalDb();
-  const ranked = users
-    .map((u: any) => ({
-      name: u.username,
-      maxLevel: u.maxLevel || 1,
-      score: u.highScore || 0,
-      rank: 0,
-      avatar: '👤'
-    }))
-    .sort((a: any, b: any) => {
-      if (b.maxLevel !== a.maxLevel) return b.maxLevel - a.maxLevel;
-      return b.score - a.score;
-    })
-    .slice(0, 5);
+  if (isCloudBaseConfigured()) {
+    try {
+      const res = await db.collection('users')
+        .orderBy('maxLevel', 'desc')
+        .orderBy('highScore', 'desc')
+        .limit(10)
+        .get();
 
-  return ranked.map((u: any, i: number) => ({ ...u, rank: i + 1 }));
+      if (res.data) {
+        return res.data.map((u: any, i: number) => ({
+          name: u.username,
+          maxLevel: u.maxLevel || 1,
+          score: u.highScore || 0,
+          rank: i + 1,
+          avatar: '👤'
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  return [];
 };
