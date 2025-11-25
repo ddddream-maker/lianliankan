@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { User } from '../types';
 import { loginUser, registerUser } from '../services/auth';
@@ -54,7 +55,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onLoginSuccess }) => {
                 placeholder="用户名"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
+                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 text-gray-900 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all placeholder-gray-400"
             />
         </div>
         
@@ -65,7 +66,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onLoginSuccess }) => {
                 placeholder="密码"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
+                className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 text-gray-900 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all placeholder-gray-400"
             />
         </div>
 

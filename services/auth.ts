@@ -1,10 +1,17 @@
-import { User, Difficulty, LeaderboardEntry } from '../types';
+
+import { User, LeaderboardEntry, UserPerks } from '../types';
 import * as API from './api';
 
-const DB_KEY = 'fruit_link_users_db_v2';
-const SESSION_KEY = 'fruit_link_session_v2';
+const DB_KEY = 'fruit_link_users_v3';
+const SESSION_KEY = 'fruit_link_session_v3';
 
-// --- LocalStorage Logic (Offline Mode) ---
+let isOnline = false;
+
+API.checkHealth().then(status => {
+    isOnline = status;
+    console.log(`Backend Status: ${status ? 'Online' : 'Offline'}`);
+});
+
 const getLocalDb = () => {
   const str = localStorage.getItem(DB_KEY);
   return str ? JSON.parse(str) : [];
@@ -14,77 +21,70 @@ const saveLocalDb = (users: any[]) => {
   localStorage.setItem(DB_KEY, JSON.stringify(users));
 };
 
-// --- Hybrid Logic ---
-
-// Variable to track online status during session
-let isOnline = false;
-
-// Check connection once on load
-API.checkHealth().then(status => {
-    isOnline = status;
-    console.log(`Backend Server Status: ${isOnline ? 'ONLINE 🟢' : 'OFFLINE 🔴 (Using LocalStorage)'}`);
+// Helper to normalize user object
+const normalizeUser = (u: any): User => ({
+    username: u.username,
+    maxLevel: u.maxLevel || 1,
+    highScore: u.highScore || 0,
+    coins: u.coins || 0,
+    inventory: u.inventory || {},
+    perks: u.perks || { extraHints: 0, extraShuffles: 0 }
 });
 
 export const loginUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-  // Try Online First
-  if (await API.checkHealth()) {
+  if (isOnline) {
       try {
           const res = await API.apiLogin(username, password);
           if (res.success && res.user) {
-              localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
-              isOnline = true;
-              return res;
+              const normalized = normalizeUser(res.user);
+              localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+              return { ...res, user: normalized };
           }
-          return res;
-      } catch (e) {
-          isOnline = false;
-      }
+      } catch (e) {}
   }
 
-  // Fallback to LocalStorage
   const users = getLocalDb();
   const user = users.find((u: any) => u.username.toLowerCase() === username.toLowerCase());
 
   if (user && user.passwordHash === password) {
-    const safeUser = { username: user.username, records: user.records };
+    const safeUser = normalizeUser(user);
     localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
     return { success: true, user: safeUser };
   }
-  return { success: false, message: '账号或密码错误 (Offline Mode)' };
+  return { success: false, message: '账号或密码错误 (Offline)' };
 };
 
 export const registerUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
-  // Try Online First
-  if (await API.checkHealth()) {
+  if (isOnline) {
       try {
           const res = await API.apiRegister(username, password);
           if (res.success && res.user) {
-              localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
-              isOnline = true;
-              return res;
+              const normalized = normalizeUser(res.user);
+              localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+              return { ...res, user: normalized };
           }
-          return res;
-      } catch (e) {
-          isOnline = false;
-      }
+      } catch (e) {}
   }
 
-  // Fallback to LocalStorage
   const users = getLocalDb();
   if (users.some((u: any) => u.username.toLowerCase() === username.toLowerCase())) {
-    return { success: false, message: '该用户名已被注册' };
+    return { success: false, message: '用户已存在' };
   }
 
   const newUser = {
     username,
     passwordHash: password,
-    records: {}
+    maxLevel: 1,
+    highScore: 0,
+    coins: 0,
+    inventory: {},
+    perks: { extraHints: 0, extraShuffles: 0 }
   };
 
   users.push(newUser);
   saveLocalDb(users);
   
-  const safeUser = { username: newUser.username, records: newUser.records };
+  const safeUser = normalizeUser(newUser);
   localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
   
   return { success: true, user: safeUser };
@@ -99,60 +99,87 @@ export const getCurrentUser = (): User | null => {
   return str ? JSON.parse(str) : null;
 };
 
-export const updateUserScore = async (username: string, difficulty: Difficulty, newScore: number, timeUsed: number) => {
-  // Always try to upload to server if online
-  if (isOnline) {
-      API.apiUpdateScore(username, difficulty, newScore, timeUsed);
-  }
-
-  // Always update local storage as backup/cache
+// Update Score, Coins, Inventory AND Perks
+export const updateUserStats = async (username: string, stats: { 
+    maxLevel?: number, 
+    highScore?: number, 
+    addCoins?: number, 
+    spendCoins?: number,
+    addItems?: Record<string, number>,
+    upgradePerk?: keyof UserPerks
+}) => {
   const users = getLocalDb();
   const userIndex = users.findIndex((u: any) => u.username === username);
   
   if (userIndex !== -1) {
     const user = users[userIndex];
-    if (!user.records) user.records = {};
-    const currentRecord = user.records[difficulty];
-    let shouldUpdate = false;
-    
-    if (!currentRecord || newScore > currentRecord.score || (newScore === currentRecord.score && timeUsed < currentRecord.timeUsed)) {
-      shouldUpdate = true;
+    // Ensure fields exist
+    if (!user.maxLevel) user.maxLevel = 1;
+    if (!user.highScore) user.highScore = 0;
+    if (!user.coins) user.coins = 0;
+    if (!user.inventory) user.inventory = {};
+    if (!user.perks) user.perks = { extraHints: 0, extraShuffles: 0 };
+
+    let updated = false;
+
+    if (stats.maxLevel && stats.maxLevel > user.maxLevel) {
+        user.maxLevel = stats.maxLevel;
+        updated = true;
+    }
+    if (stats.highScore && stats.highScore > user.highScore) {
+        user.highScore = stats.highScore;
+        updated = true;
+    }
+    if (stats.addCoins) {
+        user.coins += stats.addCoins;
+        updated = true;
+    }
+    if (stats.spendCoins) {
+        user.coins = Math.max(0, user.coins - stats.spendCoins);
+        updated = true;
+    }
+    if (stats.addItems) {
+        Object.entries(stats.addItems).forEach(([item, count]) => {
+            const itemCount = count as number;
+            user.inventory[item] = (user.inventory[item] || 0) + itemCount;
+        });
+        updated = true;
+    }
+    if (stats.upgradePerk) {
+        user.perks[stats.upgradePerk] = (user.perks[stats.upgradePerk] || 0) + 1;
+        updated = true;
     }
 
-    if (shouldUpdate) {
-      user.records[difficulty] = { score: newScore, timeUsed };
+    if (updated) {
       saveLocalDb(users);
-      
-      // Update session
+      // Update session if it matches
       const session = getCurrentUser();
       if (session && session.username === username) {
-        session.records = user.records;
+        session.maxLevel = user.maxLevel;
+        session.highScore = user.highScore;
+        session.coins = user.coins;
+        session.inventory = user.inventory;
+        session.perks = user.perks;
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
       }
     }
   }
 };
 
-// New function to fetch global leaderboard
-export const getGlobalLeaderboard = async (difficulty: Difficulty = 'normal'): Promise<LeaderboardEntry[]> => {
-    // 1. Try Server
-    if (await API.checkHealth()) {
-        const data = await API.apiGetLeaderboard(difficulty);
-        if (data.length > 0) return data;
-    }
-
-    // 2. Fallback to generating local leaderboard from localStorage data
-    // (In a real app, localStorage only has *current* user usually, but here we simulated a DB)
+export const getGlobalLeaderboard = async (): Promise<LeaderboardEntry[]> => {
     const users = getLocalDb();
     const ranked = users
-        .filter((u: any) => u.records && u.records[difficulty])
         .map((u: any) => ({
             name: u.username,
-            score: u.records[difficulty].score,
+            maxLevel: u.maxLevel || 1,
+            score: u.highScore || 0,
             rank: 0,
             avatar: '👤'
         }))
-        .sort((a: any, b: any) => b.score - a.score)
+        .sort((a: any, b: any) => {
+            if (b.maxLevel !== a.maxLevel) return b.maxLevel - a.maxLevel;
+            return b.score - a.score;
+        })
         .slice(0, 5);
     
     return ranked.map((u: any, i: number) => ({ ...u, rank: i + 1 }));

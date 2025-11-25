@@ -1,11 +1,11 @@
-export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export enum GameState {
   MENU = 'MENU',
   PLAYING = 'PLAYING',
   PAUSED = 'PAUSED',
-  WON = 'WON',
-  LOST = 'LOST'
+  WON = 'WON', // Level Complete
+  LOST = 'LOST', // Level Failed (Lives > 0)
+  GAME_OVER = 'GAME_OVER' // Lives == 0
 }
 
 export interface Position {
@@ -22,12 +22,14 @@ export interface TileData {
   isBlocker?: boolean; // If true, this is a permanent wall/gap in the pattern
 }
 
-export interface BoardConfig {
+export interface LevelConfig {
+  level: number;
   rows: number;
   cols: number;
   totalTime: number; // in seconds
-  initialHints: number;
-  initialShuffles: number;
+  targetScore: number;
+  hints: number;
+  shuffles: number;
 }
 
 export interface PathNode {
@@ -38,25 +40,34 @@ export interface PathNode {
   parent?: PathNode;
 }
 
-export interface GameRecord {
-  score: number;
-  timeUsed: number; // in seconds
+export interface UserPerks {
+  extraHints: number;
+  extraShuffles: number;
 }
 
 export interface User {
   username: string;
-  // Map difficulty to their best record
-  records: {
-    easy?: GameRecord;
-    normal?: GameRecord;
-    hard?: GameRecord;
-  };
+  maxLevel: number;
+  highScore: number; // Highest cumulative score in a single run
+  coins: number;
+  inventory: Record<string, number>; // Fruit type -> Count
+  perks: UserPerks; // Permanent upgrades
 }
 
 export interface LeaderboardEntry {
     name: string;
+    maxLevel: number;
     score: number;
     rank: number;
     avatar: string;
-    timeUsed?: number;
+}
+
+export interface Recipe {
+    id: string;
+    name: string;
+    description: string;
+    costItems: Record<string, number>; // e.g. { '🍎': 5, '🍌': 2 }
+    rewardType: 'coin' | 'hint' | 'shuffle';
+    rewardAmount: number;
+    icon: any; // Icon name or component reference
 }

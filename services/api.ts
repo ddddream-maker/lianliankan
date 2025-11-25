@@ -1,4 +1,5 @@
-import { User, Difficulty, LeaderboardEntry } from '../types';
+
+import { User, LeaderboardEntry } from '../types';
 
 // Safely retrieve environment variables to avoid runtime errors
 const getMetaEnv = () => {
@@ -72,7 +73,7 @@ export const apiRegister = async (username: string, password: string): Promise<{
     }
 };
 
-export const apiUpdateScore = async (username: string, difficulty: Difficulty, score: number, timeUsed: number) => {
+export const apiUpdateScore = async (username: string, difficulty: string, score: number, timeUsed: number) => {
     if (!API_BASE_URL) return;
 
     try {
@@ -86,7 +87,7 @@ export const apiUpdateScore = async (username: string, difficulty: Difficulty, s
     }
 };
 
-export const apiGetLeaderboard = async (difficulty: Difficulty): Promise<LeaderboardEntry[]> => {
+export const apiGetLeaderboard = async (difficulty: string): Promise<LeaderboardEntry[]> => {
     if (!API_BASE_URL) return [];
 
     try {

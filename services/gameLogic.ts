@@ -1,3 +1,4 @@
+
 import { TileData, Position, PathNode } from '../types';
 import { FRUIT_EMOJIS, BOARD_PADDING } from '../constants';
 
@@ -52,103 +53,40 @@ const patterns: Record<string, PatternFn> = {
 
 const getRandomPattern = (): PatternFn => {
   const keys = Object.keys(patterns);
-  // Give 'concave' and 'full' slightly higher weights logically, 
-  // but here we just pick randomly.
   const key = keys[Math.floor(Math.random() * keys.length)];
   return patterns[key];
 };
 
-// Generate the initial board with patterns
-export const generateBoard = (rows: number, cols: number): TileData[][] => {
-  const totalRows = rows + (BOARD_PADDING * 2);
-  const totalCols = cols + (BOARD_PADDING * 2);
-  
-  // 1. Determine active slots based on a random pattern
-  const patternFn = getRandomPattern();
-  const activeSlots: Position[] = [];
+// Base randomizer logic (single pass)
+const randomizePositions = (board: TileData[][]): TileData[][] => {
+  const rows = board.length;
+  const cols = board[0].length;
+  const activeTiles: string[] = [];
+  const positions: Position[] = [];
 
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (patternFn(x, y, rows, cols)) {
-        activeSlots.push({ x: x + BOARD_PADDING, y: y + BOARD_PADDING });
+  for(let y=0; y<rows; y++) {
+    for(let x=0; x<cols; x++) {
+      if(!board[y][x].isEmpty) {
+        activeTiles.push(board[y][x].type);
+        positions.push({x, y});
       }
     }
   }
 
-  // 2. Ensure even number of tiles for pairs
-  if (activeSlots.length % 2 !== 0) {
-    // Remove a random slot to make it even
-    const rmIdx = Math.floor(Math.random() * activeSlots.length);
-    activeSlots.splice(rmIdx, 1);
-  }
-
-  // 3. Select Fruits
-  const numPairs = activeSlots.length / 2;
-  const gameFruits = FRUIT_EMOJIS.sort(() => Math.random() - 0.5).slice(0, Math.min(numPairs, 25)); // Use up to 25 distinct fruits
+  // Shuffle the fruit types
+  activeTiles.sort(() => Math.random() - 0.5);
   
-  let tileValues: string[] = [];
-  for (let i = 0; i < numPairs; i++) {
-    // Cycle through selected fruits if we need more pairs than types available
-    const fruit = gameFruits[i % gameFruits.length];
-    tileValues.push(fruit, fruit);
-  }
-  
-  // Shuffle values
-  tileValues = tileValues.sort(() => Math.random() - 0.5);
+  // Clone board structure
+  const newBoard = board.map(row => row.map(tile => ({...tile})));
 
-  // 4. Build Board
-  const board: TileData[][] = [];
-  
-  // Initialize full padded grid as empty/blockers
-  for (let y = 0; y < totalRows; y++) {
-    const row: TileData[] = [];
-    for (let x = 0; x < totalCols; x++) {
-      row.push({
-        id: `pad-${x}-${y}`,
-        type: '',
-        x,
-        y,
-        isEmpty: true,
-        isBlocker: true // Default to blocker, will open up valid slots below
-      });
-    }
-    board.push(row);
-  }
-
-  // Place active tiles
-  activeSlots.forEach((pos, idx) => {
-    board[pos.y][pos.x] = {
-      id: `tile-${pos.x}-${pos.y}-${Math.random().toString(36).substr(2, 5)}`,
-      type: tileValues[idx],
-      x: pos.x,
-      y: pos.y,
-      isEmpty: false,
-      isBlocker: false
-    };
+  // Reassign types
+  positions.forEach((pos, idx) => {
+    newBoard[pos.y][pos.x].type = activeTiles[idx];
+    // Assign new ID to trigger React re-render animation if needed
+    newBoard[pos.y][pos.x].id = `tile-${pos.x}-${pos.y}-${Math.random().toString(36).substr(2, 5)}`;
   });
 
-  // Also mark padding as non-blockers (traversable empty space)
-  for (let y = 0; y < totalRows; y++) {
-    for (let x = 0; x < totalCols; x++) {
-       const isPadding = 
-        y < BOARD_PADDING || 
-        y >= totalRows - BOARD_PADDING || 
-        x < BOARD_PADDING || 
-        x >= totalCols - BOARD_PADDING;
-        
-       if (isPadding) {
-         board[y][x].isBlocker = false;
-       }
-       
-       // Also if a slot was inside the grid but NOT in activeSlots, it acts as empty traversable space
-       // UNLESS we want "walls". For Connect-2, usually gaps are traversable.
-       // The pattern simply dictates where tiles START. It doesn't build walls.
-       // So ensure everything is non-blocker for pathfinding unless we specifically want walls.
-       board[y][x].isBlocker = false; 
-    }
-  }
-
-  return board;
+  return newBoard;
 };
 
 // BFS Pathfinding
@@ -197,7 +135,6 @@ export const findPath = (
       const tile = board[ny][nx];
       
       // Can only traverse if empty or is target. 
-      // isBlocker would be for walls, but currently we assume gaps are walkable.
       if (!tile.isEmpty && !isTarget) continue;
 
       const newTurns = (current.direction !== 'none' && current.direction !== dir.name)
@@ -255,32 +192,122 @@ export const getHintPair = (board: TileData[][]): [Position, Position] | null =>
   return null;
 };
 
+export const hasValidMoves = (board: TileData[][]): boolean => {
+  return getHintPair(board) !== null;
+};
+
+/**
+ * Robust Shuffle:
+ * Tries to shuffle the board multiple times until a solvable state (has valid moves) is found.
+ * This prevents the user from getting a "dead" board after using a shuffle item.
+ */
 export const shuffleBoard = (board: TileData[][]): TileData[][] => {
-  const rows = board.length;
-  const cols = board[0].length;
-  const activeTiles: string[] = [];
-  const positions: Position[] = [];
+  let attempt = 0;
+  let newBoard = board;
+  
+  // Try up to 50 times to find a solvable permutation
+  do {
+    newBoard = randomizePositions(newBoard);
+    attempt++;
+    // If we have valid moves, or if the board is empty (cleared), stop.
+    // Also stop if we exceed max attempts to prevent infinite freeze (very rare).
+  } while (!hasValidMoves(newBoard) && attempt < 50);
 
-  for(let y=0; y<rows; y++) {
-    for(let x=0; x<cols; x++) {
-      if(!board[y][x].isEmpty) {
-        activeTiles.push(board[y][x].type);
-        positions.push({x, y});
-      }
-    }
+  if (attempt >= 50) {
+    console.warn("Could not find a solvable shuffle after 50 attempts.");
   }
-
-  activeTiles.sort(() => Math.random() - 0.5);
-  const newBoard = board.map(row => row.map(tile => ({...tile})));
-
-  positions.forEach((pos, idx) => {
-    newBoard[pos.y][pos.x].type = activeTiles[idx];
-    newBoard[pos.y][pos.x].id = `tile-${pos.x}-${pos.y}-${Math.random().toString(36).substr(2, 5)}`;
-  });
 
   return newBoard;
 };
 
-export const hasValidMoves = (board: TileData[][]): boolean => {
-  return getHintPair(board) !== null;
+// Generate the initial board with patterns
+export const generateBoard = (rows: number, cols: number): TileData[][] => {
+  const totalRows = rows + (BOARD_PADDING * 2);
+  const totalCols = cols + (BOARD_PADDING * 2);
+  
+  // 1. Determine active slots based on a random pattern
+  const patternFn = getRandomPattern();
+  const activeSlots: Position[] = [];
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (patternFn(x, y, rows, cols)) {
+        activeSlots.push({ x: x + BOARD_PADDING, y: y + BOARD_PADDING });
+      }
+    }
+  }
+
+  // 2. Ensure even number of tiles for pairs
+  if (activeSlots.length % 2 !== 0) {
+    const rmIdx = Math.floor(Math.random() * activeSlots.length);
+    activeSlots.splice(rmIdx, 1);
+  }
+
+  // 3. Select Fruits
+  const numPairs = activeSlots.length / 2;
+  const gameFruits = FRUIT_EMOJIS.sort(() => Math.random() - 0.5).slice(0, Math.min(numPairs, 25));
+  
+  let tileValues: string[] = [];
+  for (let i = 0; i < numPairs; i++) {
+    const fruit = gameFruits[i % gameFruits.length];
+    tileValues.push(fruit, fruit);
+  }
+  
+  tileValues = tileValues.sort(() => Math.random() - 0.5);
+
+  // 4. Build Board Structure
+  let board: TileData[][] = [];
+  
+  for (let y = 0; y < totalRows; y++) {
+    const row: TileData[] = [];
+    for (let x = 0; x < totalCols; x++) {
+      row.push({
+        id: `pad-${x}-${y}`,
+        type: '',
+        x,
+        y,
+        isEmpty: true,
+        isBlocker: true 
+      });
+    }
+    board.push(row);
+  }
+
+  // Place active tiles
+  activeSlots.forEach((pos, idx) => {
+    board[pos.y][pos.x] = {
+      id: `tile-${pos.x}-${pos.y}-${Math.random().toString(36).substr(2, 5)}`,
+      type: tileValues[idx],
+      x: pos.x,
+      y: pos.y,
+      isEmpty: false,
+      isBlocker: false
+    };
+  });
+
+  // Mark empty spaces as non-blockers (traversable)
+  for (let y = 0; y < totalRows; y++) {
+    for (let x = 0; x < totalCols; x++) {
+       const isPadding = 
+        y < BOARD_PADDING || 
+        y >= totalRows - BOARD_PADDING || 
+        x < BOARD_PADDING || 
+        x >= totalCols - BOARD_PADDING;
+        
+       if (isPadding) {
+         board[y][x].isBlocker = false;
+       }
+       // Internal empty slots are also traversable
+       board[y][x].isBlocker = false; 
+    }
+  }
+
+  // 5. CRITICAL: Ensure Initial Solvability
+  // If the generated board has no valid moves immediately, shuffle it until it does.
+  if (!hasValidMoves(board)) {
+      console.log("Initial board has no moves, shuffling...");
+      board = shuffleBoard(board);
+  }
+
+  return board;
 };
