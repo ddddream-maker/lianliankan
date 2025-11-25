@@ -1,5 +1,5 @@
 import { User, LeaderboardEntry, UserPerks } from '../types';
-import { auth, db, isCloudBaseConfigured } from './tcb';
+import { auth, db, app, isCloudBaseConfigured } from './tcb';
 
 const SESSION_KEY = 'fruit_link_session_v3';
 
@@ -13,46 +13,45 @@ const normalizeUser = (u: any): User => ({
   perks: u.perks || { extraHints: 0, extraShuffles: 0 }
 });
 
+// Helper to call the Cloud Function
+const callAuthFunction = async (data: any) => {
+  const res = await app.callFunction({
+    name: 'user_auth',
+    data
+  });
+  const result = res.result as any;
+  if (result.code !== 0) {
+    throw new Error(result.message || 'Operation failed');
+  }
+  return result.data;
+};
+
 export const loginUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
   if (!isCloudBaseConfigured()) {
     return { success: false, message: 'CloudBase EnvID not configured' };
   }
 
   try {
-    const email = username.includes('@') ? username : `${username}@fruitlink.com`;
-
-    // Cast auth to any to avoid TS errors with SDK types
+    // Ensure we have a connection (Anonymous Login)
     const authInstance = auth as any;
-    // CloudBase SDK v2 uses signInWithEmail for email/password login
-    await authInstance.signInWithEmail(email, password);
-    const currentUser = authInstance.currentUser;
-
-    if (currentUser) {
-      const res = await db.collection('users').doc(currentUser.uid).get();
-
-      let userData;
-      if (res.data && res.data.length > 0) {
-        userData = res.data[0];
-      } else {
-        userData = {
-          username: username,
-          maxLevel: 1,
-          highScore: 0,
-          coins: 0,
-          inventory: {},
-          perks: { extraHints: 0, extraShuffles: 0 }
-        };
-        await db.collection('users').doc(currentUser.uid).set(userData);
-      }
-
-      const normalized = normalizeUser(userData);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
-      return { success: true, user: normalized };
+    if (!authInstance.currentUser) {
+      await authInstance.signInAnonymously();
     }
+
+    // Call Cloud Function to Login
+    const userData = await callAuthFunction({
+      action: 'login',
+      username,
+      password
+    });
+
+    const normalized = normalizeUser(userData);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
+    return { success: true, user: normalized };
+
   } catch (e: any) {
     return { success: false, message: e.message || 'Login failed' };
   }
-  return { success: false, message: 'Login failed' };
 };
 
 export const registerUser = async (username: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
@@ -61,43 +60,30 @@ export const registerUser = async (username: string, password: string): Promise<
   }
 
   try {
-    const email = username.includes('@') ? username : `${username}@fruitlink.com`;
-
+    // Ensure connection
     const authInstance = auth as any;
-    // CloudBase SDK v2 uses signUp for registration
-    await authInstance.signUp(email, password);
-
-    // Auto login after sign up
-    await authInstance.signInWithEmail(email, password);
-    const currentUser = authInstance.currentUser;
-
-    if (currentUser) {
-      const newUser = {
-        username,
-        maxLevel: 1,
-        highScore: 0,
-        coins: 0,
-        inventory: {},
-        perks: { extraHints: 0, extraShuffles: 0 }
-      };
-
-      await db.collection('users').doc(currentUser.uid).set(newUser);
-
-      const safeUser = normalizeUser(newUser);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-      return { success: true, user: safeUser };
+    if (!authInstance.currentUser) {
+      await authInstance.signInAnonymously();
     }
+
+    // Call Cloud Function to Register
+    const userData = await callAuthFunction({
+      action: 'register',
+      username,
+      password
+    });
+
+    const safeUser = normalizeUser(userData);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
+    return { success: true, user: safeUser };
+
   } catch (e: any) {
     return { success: false, message: e.message || 'Registration failed' };
   }
-  return { success: false, message: 'Registration failed' };
 };
 
 export const logoutUser = async () => {
-  if (isCloudBaseConfigured()) {
-    const authInstance = auth as any;
-    await authInstance.signOut();
-  }
+  // We don't need to sign out of Anonymous auth, just clear local session
   localStorage.removeItem(SESSION_KEY);
 };
 
@@ -106,6 +92,7 @@ export const getCurrentUser = (): User | null => {
   return str ? JSON.parse(str) : null;
 };
 
+// Update Score, Coins, Inventory AND Perks
 export const updateUserStats = async (username: string, stats: {
   maxLevel?: number,
   highScore?: number,
@@ -117,6 +104,7 @@ export const updateUserStats = async (username: string, stats: {
   const session = getCurrentUser();
   if (!session) return;
 
+  // Update local session immediately for UI responsiveness
   let updated = false;
   if (stats.maxLevel && stats.maxLevel > session.maxLevel) { session.maxLevel = stats.maxLevel; updated = true; }
   if (stats.highScore && stats.highScore > session.highScore) { session.highScore = stats.highScore; updated = true; }
@@ -139,27 +127,17 @@ export const updateUserStats = async (username: string, stats: {
   if (updated) {
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 
-    const authInstance = auth as any;
-    if (isCloudBaseConfigured() && authInstance.currentUser) {
-      const uid = authInstance.currentUser.uid;
-      const cmd = db.command as any;
-      const updateData: any = {};
-
-      if (stats.maxLevel) updateData.maxLevel = cmd.max(stats.maxLevel);
-      if (stats.highScore) updateData.highScore = cmd.max(stats.highScore);
-      if (stats.addCoins) updateData.coins = cmd.inc(stats.addCoins);
-      if (stats.spendCoins) updateData.coins = cmd.inc(-stats.spendCoins);
-
-      if (stats.addItems) {
-        Object.entries(stats.addItems).forEach(([item, count]) => {
-          updateData[`inventory.${item}`] = cmd.inc(Number(count));
+    // Sync with CloudBase via Cloud Function
+    if (isCloudBaseConfigured()) {
+      try {
+        await callAuthFunction({
+          action: 'update',
+          username, // Using username as key
+          stats
         });
+      } catch (e) {
+        console.error('Failed to sync stats:', e);
       }
-      if (stats.upgradePerk) {
-        updateData[`perks.${stats.upgradePerk}`] = cmd.inc(1);
-      }
-
-      db.collection('users').doc(uid).update(updateData).catch(console.error);
     }
   }
 };
